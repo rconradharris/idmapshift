@@ -16,23 +16,15 @@ import os
 
 
 def find_target_id(fsid, mappings, nobody, memo):
-    if len(mappings) == 0:
-        return -1
     if fsid not in memo:
         for start, target, count in mappings:
             if start <= fsid < start + count:
                 memo[fsid] = (fsid - start) + target
-    if fsid not in memo:
-        memo[fsid] = nobody
+                break
+        else:
+            memo[fsid] = nobody
+
     return memo[fsid]
-
-
-def find_target_uid(fsid, mappings, nobody, memo):
-    return find_target_id(fsid, mappings, nobody, memo)
-
-
-def find_target_gid(fsid, mappings, nobody, memo):
-    return find_target_id(fsid, mappings, nobody, memo)
 
 
 def print_chown(path, uid, gid, target_uid, target_gid):
@@ -44,8 +36,8 @@ def shift_path(path, uid_mappings, gid_mappings, nobody, uid_memo, gid_memo,
     stat = os.lstat(path)
     uid = stat.st_uid
     gid = stat.st_gid
-    target_uid = find_target_uid(uid, uid_mappings, nobody, uid_memo)
-    target_gid = find_target_gid(gid, gid_mappings, nobody, gid_memo)
+    target_uid = find_target_id(uid, uid_mappings, nobody, uid_memo)
+    target_gid = find_target_id(gid, gid_mappings, nobody, gid_memo)
     if verbose:
         print_chown(path, uid, gid, target_uid, target_gid)
     if not dry_run:
@@ -70,3 +62,47 @@ def shift_dir(fsdir, uid_mappings, gid_mappings, nobody,
         for f in files:
             path = os.path.join(root, f)
             shift_path_short(path)
+
+
+def confirm_path(path, uid_ranges, gid_ranges, nobody):
+    stat = os.lstat(path)
+    uid = stat.st_uid
+    gid = stat.st_gid
+
+    uid_in_range = True if uid == nobody else False
+    gid_in_range = True if gid == nobody else False
+
+    if not uid_in_range or not gid_in_range:
+        for (start, end) in uid_ranges:
+            if start <= uid <= end:
+                uid_in_range = True
+                break
+
+        for (start, end) in gid_ranges:
+            if start <= gid <= end:
+                gid_in_range = True
+                break
+
+    return uid_in_range and gid_in_range
+
+
+def get_ranges(maps):
+    return [(target, target + count - 1) for (start, target, count) in maps]
+
+
+def confirm_dir(fsdir, uid_mappings, gid_mappings, nobody):
+    uid_ranges = get_ranges(uid_mappings)
+    gid_ranges = get_ranges(gid_mappings)
+
+    if not confirm_path(fsdir, uid_ranges, gid_ranges, nobody):
+        return False
+    for root, dirs, files in os.walk(fsdir):
+        for d in dirs:
+            path = os.path.join(root, d)
+            if not confirm_path(path, uid_ranges, gid_ranges, nobody):
+                return False
+        for f in files:
+            path = os.path.join(root, f)
+            if not confirm_path(path, uid_ranges, gid_ranges, nobody):
+                return False
+    return True
